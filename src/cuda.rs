@@ -12,6 +12,9 @@ pub mod kernels {
 
   use super::*;
 
+  const GRAVITY: f32 = 0.1;
+  const ENERGY_LOSS: f32 = 0.9;
+
   #[kernel]
   #[launch_bounds(256)]
   #[launch_contract(domain = 1, block = (256, 1, 1))]
@@ -29,13 +32,15 @@ pub mod kernels {
 
       if out.pos[0] < 0.0 || out.pos[0] >= WIDTH as f32 {
         out.pos[0] = out.pos[0].clamp(0.0, WIDTH as f32 - 1.0);
-        out.vel[0] *= -1.0;
+        out.vel[0] *= -ENERGY_LOSS;
       }
 
       if out.pos[1] < 0.0 || out.pos[1] >= HEIGHT as f32 {
         out.pos[1] = out.pos[1].clamp(0.0, HEIGHT as f32 - 1.0);
-        out.vel[1] *= -1.0;
+        out.vel[1] *= -ENERGY_LOSS;
       }
+
+      out.vel[1] += GRAVITY * dt;
     }
   }
 
