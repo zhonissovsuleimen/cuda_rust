@@ -3,9 +3,10 @@ use cuda_host::cuda_module;
 
 #[cuda_module]
 pub mod kernels {
-  use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32};
+  use cuda_device::atomic::{AtomicOrdering, DeviceAtomicF32, DeviceAtomicU32};
 
   use crate::{
+    cell::Cell,
     consts::{HEIGHT, WIDTH},
     particle::Particle,
   };
@@ -18,7 +19,7 @@ pub mod kernels {
   #[kernel]
   #[launch_bounds(256)]
   #[launch_contract(domain = 1, block = (256, 1, 1))]
-  pub fn solve(input: &[Particle], mut output: DisjointSlice<Particle>, dt: f32) {
+  pub fn upd_particles(input: &[Particle], mut output: DisjointSlice<Particle>, dt: f32) {
     let idx = thread::index_1d();
     let i = idx.get();
 
@@ -47,7 +48,39 @@ pub mod kernels {
   #[kernel]
   #[launch_bounds(256)]
   #[launch_contract(domain = 1, block = (256, 1, 1))]
-  pub fn clear(mut screen: DisjointSlice<u32>) {
+  pub fn clear_cells(mut cells: DisjointSlice<Cell>) {
+    let idx = thread::index_1d();
+
+    if let Some(cell) = cells.get_mut(idx) {
+      cell.clear();
+    }
+  }
+
+  #[kernel]
+  #[launch_bounds(256)]
+  #[launch_contract(domain = 1, block = (256, 1, 1))]
+  pub unsafe fn upd_cells(particles: &[Particle], cells: *mut Cell) {
+    let i = thread::index_1d().get();
+
+    if let Some(p) = particles.get(i) {
+      let cell_id = p.pos[0] as usize + p.pos[1] as usize * WIDTH;
+
+      unsafe {
+        let cell = cells.add(cell_id);
+
+        DeviceAtomicU32::from_ptr(&raw mut (*cell).count).fetch_add(1, AtomicOrdering::Relaxed);
+        DeviceAtomicF32::from_ptr(&raw mut (*cell).vel[0])
+          .fetch_add(p.vel[0], AtomicOrdering::Relaxed);
+        DeviceAtomicF32::from_ptr(&raw mut (*cell).vel[1])
+          .fetch_add(p.vel[1], AtomicOrdering::Relaxed);
+      }
+    }
+  }
+
+  #[kernel]
+  #[launch_bounds(256)]
+  #[launch_contract(domain = 1, block = (256, 1, 1))]
+  pub fn clear_screen(mut screen: DisjointSlice<u32>) {
     let idx = thread::index_1d();
 
     if let Some(pixel) = screen.get_mut(idx) {
@@ -57,15 +90,21 @@ pub mod kernels {
   #[kernel]
   #[launch_bounds(256)]
   #[launch_contract(domain = 1, block = (256, 1, 1))]
-  pub unsafe fn draw(particles: &[Particle], screen: *mut u32) {
-    let i = thread::index_1d().get();
+  pub fn draw(cells: &[Cell], mut screen: DisjointSlice<u32>) {
+    let idx = thread::index_1d();
+    let i = idx.get();
 
-    if let Some(p) = particles.get(i) {
-      let pixel_id = p.pos[0] as usize + p.pos[1] as usize * WIDTH;
-
-      unsafe {
-        DeviceAtomicU32::from_ptr(screen.add(pixel_id)).store(0x000000FF, AtomicOrdering::Relaxed);
+    if let Some(pixel) = screen.get_mut(idx) {
+      if cells[i].count == 0 {
+        *pixel = 0;
+        return;
       }
+
+      let max = 5;
+      let intensity = cells[i].count.clamp(0, max) as f32 / max as f32;
+      let c = (0xFFu8 as f32 * (1.0 - intensity)) as u32;
+
+      *pixel = (c << 16) | (c << 8) | 0xFF;
     }
   }
 }
