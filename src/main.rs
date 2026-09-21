@@ -1,3 +1,5 @@
+use std::mem;
+
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 use minifb::{Key, Window, WindowOptions};
 
@@ -33,9 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut device_screen = DeviceBuffer::from_host(&stream, &host_screen)?;
 
   let mut host_particles: Vec<Particle> = (0..100).map(|_| Particle::random()).collect();
-  let mut device_particles_a = DeviceBuffer::from_host(&stream, &host_particles)?;
-  let mut device_particles_b = DeviceBuffer::from_host(&stream, &host_particles)?;
-  let mut flip = true;
+  let mut device_particles_input = DeviceBuffer::from_host(&stream, &host_particles)?;
+  let mut device_particles_output = DeviceBuffer::from_host(&stream, &host_particles)?;
 
   let module = unsafe { kernels::load(&ctx)? };
 
@@ -46,24 +47,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   while window.is_open() && !window.is_key_down(Key::Escape) {
     module.clear(&stream, &prep_clear, &mut device_screen)?;
 
-    if flip {
-      #[rustfmt::skip]
-      module.solve(&stream, &prep_solve, &device_particles_a, &mut device_particles_b, 1.0)?;
+    #[rustfmt::skip]
+    module.solve(&stream, &prep_solve, &device_particles_input, &mut device_particles_output, 1.0)?;
+    mem::swap(&mut device_particles_input, &mut device_particles_output);
 
-      unsafe {
-        let screen_ptr = device_screen.cu_deviceptr() as *mut u32;
-        module.draw(&stream, &prep_draw, &device_particles_b, screen_ptr)?;
-      }
-    } else {
-      #[rustfmt::skip]
-      module.solve(&stream, &prep_solve, &device_particles_b, &mut device_particles_a, 1.0)?;
-
-      unsafe {
-        let screen_ptr = device_screen.cu_deviceptr() as *mut u32;
-        module.draw(&stream, &prep_draw, &device_particles_a, screen_ptr)?;
-      }
+    unsafe {
+      let screen_ptr = device_screen.cu_deviceptr() as *mut u32;
+      module.draw(&stream, &prep_draw, &device_particles_output, screen_ptr)?;
     }
-    flip = !flip;
 
     host_screen = device_screen.to_host_vec(&stream)?;
 
