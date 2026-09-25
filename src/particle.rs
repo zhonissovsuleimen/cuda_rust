@@ -21,4 +21,11 @@ impl Particle {
       ],
     }
   }
+
+  pub fn zeros() -> Self {
+    Self {
+      pos: [0.0, 0.0],
+      vel: [0.0, 0.0],
+    }
+  }
 }

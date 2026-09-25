@@ -3,8 +3,6 @@ use cuda_host::cuda_module;
 
 #[cuda_module]
 pub mod kernels {
-  use cuda_device::atomic::{AtomicOrdering, DeviceAtomicF32, DeviceAtomicU32};
-
   use crate::{
     cell::Cell,
     consts::{HEIGHT, WIDTH},
@@ -59,20 +57,25 @@ pub mod kernels {
   #[kernel]
   #[launch_bounds(256)]
   #[launch_contract(domain = 1, block = (256, 1, 1))]
-  pub unsafe fn upd_cells(particles: &[Particle], cells: *mut Cell) {
-    let i = thread::index_1d().get();
+  pub fn upd_cells(
+    particles: &[Particle],
+    offsets: &[usize],
+    counts: &[usize],
+    mut cells: DisjointSlice<Cell>,
+  ) {
+    let idx = thread::index_1d();
+    let i = idx.get();
 
-    if let Some(p) = particles.get(i) {
-      let cell_id = p.pos[0] as usize + p.pos[1] as usize * WIDTH;
+    if let Some(c) = cells.get_mut(idx) {
+      let start = offsets[i];
+      let count = counts[i];
 
-      unsafe {
-        let cell = cells.add(cell_id);
+      for pid in start..(start + count) {
+        let particle = particles[pid];
 
-        DeviceAtomicU32::from_ptr(&raw mut (*cell).count).fetch_add(1, AtomicOrdering::Relaxed);
-        DeviceAtomicF32::from_ptr(&raw mut (*cell).vel[0])
-          .fetch_add(p.vel[0], AtomicOrdering::Relaxed);
-        DeviceAtomicF32::from_ptr(&raw mut (*cell).vel[1])
-          .fetch_add(p.vel[1], AtomicOrdering::Relaxed);
+        c.count += 1;
+        c.vel[0] += particle.vel[0];
+        c.vel[1] += particle.vel[1];
       }
     }
   }

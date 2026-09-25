@@ -4,16 +4,16 @@ use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 use minifb::{Key, Window, WindowOptions};
 
 use crate::{
-  cell::Cell,
   consts::{HEIGHT, SIZE, WIDTH},
   cuda::kernels,
-  particle::Particle,
+  pic::PIC,
 };
 
 mod cell;
 mod consts;
 mod cuda;
 mod particle;
+mod pic;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut window = Window::new(
@@ -36,12 +36,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut host_screen = vec![0u32; SIZE];
   let mut device_screen = DeviceBuffer::from_host(&stream, &host_screen)?;
 
-  let host_cells = vec![Cell::empty(); SIZE];
-  let mut device_cells = DeviceBuffer::from_host(&stream, &host_cells)?;
+  let mut pic = PIC::new(10_000);
 
-  let host_particles: Vec<Particle> = (0..10000).map(|_| Particle::random()).collect();
-  let mut device_particles_input = DeviceBuffer::from_host(&stream, &host_particles)?;
-  let mut device_particles_output = DeviceBuffer::from_host(&stream, &host_particles)?;
+  let mut device_cells = DeviceBuffer::from_host(&stream, &pic.cells)?;
+  let mut device_particles_input = DeviceBuffer::from_host(&stream, &pic.particles)?;
+  let mut device_particles_output = DeviceBuffer::from_host(&stream, &pic.particles)?;
+  let mut device_offsets = DeviceBuffer::from_host(&stream, pic.offsets())?;
+  let mut device_counts = DeviceBuffer::from_host(&stream, pic.counts())?;
 
   let module = unsafe { kernels::load(&ctx)? };
 
@@ -52,19 +53,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let prep_upd_cells = module.prepare_upd_cells(launch_config)?;
 
   while window.is_open() && !window.is_key_down(Key::Escape) {
-    module.clear_screen(&stream, &prep_clear_screen, &mut device_screen)?;
-
     #[rustfmt::skip]
     module.upd_particles(&stream, &prep_upd_particles, &device_particles_input, &mut device_particles_output, 1.0)?;
 
+    pic.particles = device_particles_output.to_host_vec(&stream)?;
+    pic.update();
+    device_particles_output.copy_from_host(&stream, &pic.particles)?;
+    device_offsets.copy_from_host(&stream, pic.offsets())?;
+    device_counts.copy_from_host(&stream, pic.counts())?;
+
     module.clear_cells(&stream, &prep_clear_cells, &mut device_cells)?;
-    unsafe {
-      let cells_ptr = device_cells.cu_deviceptr() as *mut Cell;
-      #[rustfmt::skip]
-      module.upd_cells(&stream, &prep_upd_cells, &device_particles_output, cells_ptr)?;
-    }
+    module.upd_cells(
+      &stream,
+      &prep_upd_cells,
+      &device_particles_output,
+      &device_offsets,
+      &device_counts,
+      &mut device_cells,
+    )?;
 
     mem::swap(&mut device_particles_input, &mut device_particles_output);
+
+    module.clear_screen(&stream, &prep_clear_screen, &mut device_screen)?;
     #[rustfmt::skip]
     module.draw(&stream, &prep_draw_screen, &device_cells, &mut device_screen)?;
 
