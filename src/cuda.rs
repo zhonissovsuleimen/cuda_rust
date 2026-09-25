@@ -11,8 +11,8 @@ pub mod kernels {
 
   use super::*;
 
-  const GRAVITY: f32 = 0.1;
-  const ENERGY_LOSS: f32 = 0.9;
+  const GRAVITY: f32 = 9.8;
+  const ENERGY_LOSS: f32 = 0.35;
 
   #[kernel]
   #[launch_bounds(256)]

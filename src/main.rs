@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, time::Instant};
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 use minifb::{Key, Window, WindowOptions};
@@ -52,9 +52,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let prep_clear_cells = module.prepare_clear_cells(launch_config)?;
   let prep_upd_cells = module.prepare_upd_cells(launch_config)?;
 
+  let mut timer = Instant::now();
   while window.is_open() && !window.is_key_down(Key::Escape) {
     #[rustfmt::skip]
-    module.upd_particles(&stream, &prep_upd_particles, &device_particles_input, &mut device_particles_output, 1.0)?;
+    module.upd_particles(&stream, &prep_upd_particles, &device_particles_input, &mut device_particles_output, timer.elapsed().as_secs_f32())?;
+    timer = Instant::now();
 
     pic.particles = device_particles_output.to_host_vec(&stream)?;
     pic.update();
