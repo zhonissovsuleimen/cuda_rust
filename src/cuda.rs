@@ -13,6 +13,21 @@ pub mod kernels {
 
   const GRAVITY: f32 = 9.8;
   const ENERGY_LOSS: f32 = 0.35;
+  const CAP_SPEED: f32 = 10.0;
+
+  #[kernel]
+  #[launch_bounds(256)]
+  #[launch_contract(domain = 1, block = (256, 1, 1))]
+  pub fn cell_to_particle(cells: &[Cell], mut particles: DisjointSlice<Particle>, dt: f32) {
+    let idx = thread::index_1d();
+
+    if let Some(p) = particles.get_mut(idx) {
+      let cell_id = p.pos[0] as usize + p.pos[1] as usize * WIDTH;
+
+      p.vel[0] += cells[cell_id].vel[0] * dt;
+      p.vel[1] += cells[cell_id].vel[1] * dt;
+    }
+  }
 
   #[kernel]
   #[launch_bounds(256)]
@@ -23,7 +38,6 @@ pub mod kernels {
 
     if let Some(out) = output.get_mut(idx) {
       let input = &input[i];
-
       *out = *input;
 
       out.pos[0] += out.vel[0] * dt;
@@ -32,14 +46,14 @@ pub mod kernels {
       if out.pos[0] < 0.0 || out.pos[0] >= WIDTH as f32 {
         out.pos[0] = out.pos[0].clamp(0.0, WIDTH as f32 - 1.0);
         out.vel[0] *= -ENERGY_LOSS;
+        out.vel[0] = out.vel[0].clamp(-CAP_SPEED, CAP_SPEED);
       }
 
       if out.pos[1] < 0.0 || out.pos[1] >= HEIGHT as f32 {
         out.pos[1] = out.pos[1].clamp(0.0, HEIGHT as f32 - 1.0);
         out.vel[1] *= -ENERGY_LOSS;
+        out.vel[1] = out.vel[1].clamp(-CAP_SPEED, CAP_SPEED);
       }
-
-      out.vel[1] += GRAVITY * dt;
     }
   }
 
@@ -57,7 +71,7 @@ pub mod kernels {
   #[kernel]
   #[launch_bounds(256)]
   #[launch_contract(domain = 1, block = (256, 1, 1))]
-  pub fn upd_cells(
+  pub fn particle_to_cell(
     particles: &[Particle],
     offsets: &[usize],
     counts: &[usize],
@@ -77,6 +91,24 @@ pub mod kernels {
         c.vel[0] += particle.vel[0];
         c.vel[1] += particle.vel[1];
       }
+    }
+  }
+
+  #[kernel]
+  #[launch_bounds(256)]
+  #[launch_contract(domain = 1, block = (256, 1, 1))]
+  pub fn upd_cells(input: &[Cell], mut output: DisjointSlice<Cell>) {
+    let idx = thread::index_1d();
+    let i = idx.get();
+
+    if let Some(c) = output.get_mut(idx) {
+      *c = input[i];
+      let count = if c.count == 0 { 1.0 } else { c.count as f32 };
+
+      c.vel[0] = c.vel[0] / count;
+      c.vel[1] = c.vel[1] / count;
+
+      c.vel[1] += GRAVITY;
     }
   }
 
